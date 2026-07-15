@@ -107,10 +107,13 @@ std::vector<std::string> Shell::tokenize(const std::string &line) {
 }
 
 std::string Shell::extractOutputRedirect(std::vector<std::string> &tokens,
-                                         int &targetFd) {
+                                         int &targetFd, bool &append) {
   for (size_t i = 0; i + 1 < tokens.size(); ++i) {
-    if (tokens[i] == ">" || tokens[i] == "1>" || tokens[i] == "2>") {
-      targetFd = (tokens[i] == "2>") ? STDERR_FILENO : STDOUT_FILENO;
+    if (tokens[i] == ">" || tokens[i] == "1>" || tokens[i] == "2>" || tokens[i] == "1>>" ||
+        tokens[i] == ">>" || tokens[i] == "2>>") {
+      targetFd = (tokens[i] == "2>" || tokens[i] == "2>>") ? STDERR_FILENO
+                                                           : STDOUT_FILENO;
+      append = (tokens[i] == ">>" || tokens[i] == "2>>" || tokens[i] == "1>>") ? true : false;
       std::string file = tokens[i + 1];
       tokens.erase(tokens.begin() + i, tokens.begin() + i + 2);
       return file;
@@ -122,7 +125,9 @@ std::string Shell::extractOutputRedirect(std::vector<std::string> &tokens,
 void Shell::dispatch(const std::vector<std::string> &tokens) {
   std::vector<std::string> mutableTokens = tokens;
   int targetFd = STDOUT_FILENO;
-  std::string outputFile = extractOutputRedirect(mutableTokens, targetFd);
+  bool append = false;
+  std::string outputFile =
+      extractOutputRedirect(mutableTokens, targetFd, append);
 
   const std::string &name = mutableTokens[0];
   std::vector<std::string> args(mutableTokens.begin() + 1, mutableTokens.end());
@@ -134,7 +139,8 @@ void Shell::dispatch(const std::vector<std::string> &tokens) {
       std::cout.flush();
       std::cerr.flush();
       savedFd = dup(targetFd);
-      int fd = open(outputFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      int fd = open(outputFile.c_str(),
+                    O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC), 0644);
       dup2(fd, targetFd);
       close(fd);
     }
@@ -156,19 +162,21 @@ void Shell::dispatch(const std::vector<std::string> &tokens) {
     return;
   }
 
-  runExternal(name, path, args, outputFile, targetFd);
+  runExternal(name, path, args, outputFile, targetFd, append);
 }
 
 void Shell::runExternal(const std::string &name, const std::string &path,
                         const std::vector<std::string> &args,
-                        const std::string &outputFile, int targetFd) {
+                        const std::string &outputFile, int targetFd,
+                        bool append) {
   std::vector<char *> argv = buildArgv(name, args);
 
   pid_t pid = fork();
   if (pid == 0) {
     // Child: replace this process image with the external program.
     if (!outputFile.empty()) {
-      int fd = open(outputFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      int fd = open(outputFile.c_str(),
+                    O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC), 0644);
       dup2(fd, targetFd);
       close(fd);
     }
